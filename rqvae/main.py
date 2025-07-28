@@ -15,7 +15,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Index")
 
     parser.add_argument('--lr', type=float, default=1e-3, help='learning rate')
-    parser.add_argument('--epochs', type=int, default=3000, help='number of epochs')
+    parser.add_argument('--epochs', type=int, default=20000, help='number of epochs')
     parser.add_argument('--batch_size', type=int, default=1024, help='batch size')
     parser.add_argument('--num_workers', type=int, default=4, )
     parser.add_argument('--eval_step', type=int, default=50, help='eval step')
@@ -38,7 +38,7 @@ def parse_args():
     parser.add_argument('--e_dim', type=int, default=32, help='vq codebook embedding size')
     parser.add_argument('--quant_loss_weight', type=float, default=1.0, help='vq quantion loss weight')
     parser.add_argument("--beta", type=float, default=0.25, help="Beta for commitment loss")
-    parser.add_argument('--layers', type=int, nargs='+', default=[512,256,128,64], help='hidden sizes of every layer')
+    parser.add_argument('--layers', type=int, nargs='+', default=[512,256,128], help='hidden sizes of every layer')
     parser.add_argument('--save_limit', type=int, default=5, help='save limit for ckpt')
     
     parser.add_argument("--ckpt_dir", type=str, default="./ckpt/Beauty", help="please specify output directory for model")
