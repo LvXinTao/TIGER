@@ -1,91 +1,121 @@
 import argparse
 import random
 import torch
+import gin
 import numpy as np
 from time import time
 import logging
-
+import wandb
 from torch.utils.data import DataLoader
 
 from datasets import EmbDataset
 from models.rqvae import RQVAE
 from trainer import  Trainer
+from utils import fix_everything
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Index")
+def parse_config():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config_path", type=str, help="Path to gin config file.")
+    args = parser.parse_args()
+    gin.parse_config_file(args.config_path)
 
-    parser.add_argument('--lr', type=float, default=1e-3, help='learning rate')
-    parser.add_argument('--epochs', type=int, default=20000, help='number of epochs')
-    parser.add_argument('--batch_size', type=int, default=1024, help='batch size')
-    parser.add_argument('--num_workers', type=int, default=4, )
-    parser.add_argument('--eval_step', type=int, default=50, help='eval step')
-    parser.add_argument('--learner', type=str, default="AdamW", help='optimizer')
-    parser.add_argument('--lr_scheduler_type', type=str, default="linear", help='scheduler')
-    parser.add_argument('--warmup_epochs', type=int, default=50, help='warmup epochs')
-    parser.add_argument("--data_path", type=str, default="../data/Beauty/item_emb.parquet", help="Input data path.")
-    parser.add_argument("--weight_decay", type=float, default=1e-4, help='l2 regularization weight')
-    parser.add_argument("--dropout_prob", type=float, default=0.0, help="dropout ratio")
-    parser.add_argument("--bn", type=bool, default=False, help="use bn or not")
-    parser.add_argument("--loss_type", type=str, default="mse", help="loss_type")
-    parser.add_argument("--kmeans_init", type=bool, default=True, help="use kmeans_init or not")
-    parser.add_argument("--kmeans_iters", type=int, default=100, help="max kmeans iters")
-    parser.add_argument('--sk_epsilons', type=float, nargs='+', default=[0.0, 0.0, 0.003], help="sinkhorn epsilons")
-    parser.add_argument("--sk_iters", type=int, default=50, help="max sinkhorn iters")
 
-    parser.add_argument("--device", type=str, default="cuda:0", help="gpu or cpu")
-
-    parser.add_argument('--num_emb_list', type=int, nargs='+', default=[256,256,256], help='emb num of every vq')
-    parser.add_argument('--e_dim', type=int, default=32, help='vq codebook embedding size')
-    parser.add_argument('--quant_loss_weight', type=float, default=1.0, help='vq quantion loss weight')
-    parser.add_argument("--beta", type=float, default=0.25, help="Beta for commitment loss")
-    parser.add_argument('--layers', type=int, nargs='+', default=[512,256,128], help='hidden sizes of every layer')
-    parser.add_argument('--save_limit', type=int, default=5, help='save limit for ckpt')
+@gin.configurable
+def train(
+    lr,
+    epochs,
+    batch_size,
+    num_workers,
+    eval_step,
+    learner,
+    lr_scheduler_type,
+    warmup_epochs,
+    weight_decay,
+    dropout_prob,
+    bn,
+    loss_type,
+    kmeans_init,
+    kmeans_iters,
+    sk_epsilons,
+    sk_iters,
+    device,
+    wandb_logging,
+    num_emb_list,
+    e_dim,
+    quant_loss_weight,
+    beta,
+    layers,
+    save_limit,
+    ckpt_dir,
+    data_path
+):
     
-    parser.add_argument("--ckpt_dir", type=str, default="./ckpt/Beauty", help="please specify output directory for model")
-
-    return parser.parse_args()
-
-
-if __name__ == '__main__':
-    """fix the random seed"""
-    seed = 2024
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
-
-    args = parse_args()
+    fix_everything()
+    
     print("=================================================")
-    print(args)
+    print(gin.config_str())
     print("=================================================")
 
-    logging.basicConfig(level=logging.DEBUG)
+    if wandb_logging:
+        
+        wandb.login()
+        wandb.init(project="rqvae")
+
 
     """build dataset"""
-    data = EmbDataset(args.data_path)
+    data = EmbDataset(data_path)
     model = RQVAE(in_dim=data.dim,
-                  num_emb_list=args.num_emb_list,
-                  e_dim=args.e_dim,
-                  layers=args.layers,
-                  dropout_prob=args.dropout_prob,
-                  bn=args.bn,
-                  loss_type=args.loss_type,
-                  quant_loss_weight=args.quant_loss_weight,
-                  beta=args.beta,
-                  kmeans_init=args.kmeans_init,
-                  kmeans_iters=args.kmeans_iters,
-                  sk_epsilons=args.sk_epsilons,
-                  sk_iters=args.sk_iters,
+                  num_emb_list=num_emb_list,
+                  e_dim=e_dim,
+                  layers=layers,
+                  dropout_prob=dropout_prob,
+                  bn=bn,
+                  loss_type=loss_type,
+                  quant_loss_weight=quant_loss_weight,
+                  beta=beta,
+                  kmeans_init=kmeans_init,
+                  kmeans_iters=kmeans_iters,
+                  sk_epsilons=sk_epsilons,
+                  sk_iters=sk_iters,
                   )
-    print(model)
-    data_loader = DataLoader(data,num_workers=args.num_workers,
-                             batch_size=args.batch_size, shuffle=True,
+    data_loader = DataLoader(data,num_workers=num_workers,
+                             batch_size=batch_size, shuffle=True,
                              pin_memory=True)
-    trainer = Trainer(args,model, len(data_loader))
+    trainer = Trainer(  lr,
+                        epochs,
+                        batch_size,
+                        num_workers,
+                        eval_step,
+                        learner,
+                        lr_scheduler_type,
+                        warmup_epochs,
+                        weight_decay,
+                        dropout_prob,
+                        bn,
+                        loss_type,
+                        kmeans_init,
+                        kmeans_iters,
+                        sk_epsilons,
+                        sk_iters,
+                        device,
+                        wandb_logging,
+                        num_emb_list,
+                        e_dim,
+                        quant_loss_weight,
+                        beta,
+                        layers,
+                        save_limit,
+                        ckpt_dir,
+                        data_path,
+                        model=model,
+                        data_num=len(data_loader))
+    
     best_loss, best_collision_rate = trainer.fit(data_loader)
 
     print("Best Loss",best_loss)
     print("Best Collision Rate", best_collision_rate)
+
+if __name__ == '__main__':
+    parse_config()
+    train()
 

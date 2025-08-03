@@ -11,29 +11,58 @@ from utils import ensure_dir,set_color,get_local_time,delete_file
 import os
 
 import heapq
+import wandb
 class Trainer(object):
 
-    def __init__(self, args, model, data_num):
-        self.args = args
+    def __init__(self, 
+                    lr,
+                    epochs,
+                    batch_size,
+                    num_workers,
+                    eval_step,
+                    learner,
+                    lr_scheduler_type,
+                    warmup_epochs,
+                    weight_decay,
+                    dropout_prob,
+                    bn,
+                    loss_type,
+                    kmeans_init,
+                    kmeans_iters,
+                    sk_epsilons,
+                    sk_iters,
+                    device,
+                    wandb_logging,
+                    num_emb_list,
+                    e_dim,
+                    quant_loss_weight,
+                    beta,
+                    layers,
+                    save_limit,
+                    ckpt_dir,
+                    data_path,
+                    model, 
+                    data_num):
         self.model = model
         self.logger = logging.getLogger()
 
-        self.lr = args.lr
-        self.learner = args.learner
-        self.lr_scheduler_type = args.lr_scheduler_type
+        self.lr = lr
+        self.learner = learner
+        self.lr_scheduler_type = lr_scheduler_type
 
-        self.weight_decay = args.weight_decay
-        self.epochs = args.epochs
-        self.warmup_steps = args.warmup_epochs * data_num
-        self.max_steps = args.epochs * data_num
+        self.weight_decay = weight_decay
+        self.epochs = epochs
+        self.warmup_steps = warmup_epochs * data_num
+        self.max_steps = epochs * data_num
 
-        self.save_limit = args.save_limit
+        self.save_limit = save_limit
+        self.wandb_logging = wandb_logging
         self.best_save_heap = []
         self.newest_save_queue = []
-        self.eval_step = min(args.eval_step, self.epochs)
-        self.device = args.device
+        self.eval_step = min(eval_step, self.epochs)
+        self.device = device
         self.device = torch.device(self.device)
-        self.ckpt_dir = args.ckpt_dir
+        self.ckpt_dir = ckpt_dir
         saved_model_dir = "{}".format(get_local_time())
         self.ckpt_dir = os.path.join(self.ckpt_dir,saved_model_dir)
         ensure_dir(self.ckpt_dir)
@@ -90,6 +119,7 @@ class Trainer(object):
                                                              num_warmup_steps=self.warmup_steps)
 
         return lr_scheduler
+
     def _check_nan(self, loss):
         if torch.isnan(loss):
             raise ValueError("Training loss is nan")
@@ -101,14 +131,9 @@ class Trainer(object):
 
         total_loss = 0
         total_recon_loss = 0
-        iter_data = tqdm(
-                    train_data,
-                    total=len(train_data),
-                    ncols=100,
-                    desc=set_color(f"Train {epoch_idx}","pink"),
-                    )
+        total_rq_loss = 0
 
-        for batch_idx, data in enumerate(iter_data):
+        for batch_idx, data in enumerate(train_data):
             data = data.to(self.device)
             self.optimizer.zero_grad()
             out, rq_loss, indices = self.model(data)
@@ -121,24 +146,18 @@ class Trainer(object):
             # print(self.scheduler.get_last_lr())
             total_loss += loss.item()
             total_recon_loss += loss_recon.item()
+            total_rq_loss += rq_loss.item()
 
-        return total_loss, total_recon_loss
+        return total_loss, total_recon_loss, total_rq_loss
 
     @torch.no_grad()
     def _valid_epoch(self, valid_data):
 
         self.model.eval()
 
-        iter_data =tqdm(
-                valid_data,
-                total=len(valid_data),
-                ncols=100,
-                desc=set_color(f"Evaluate   ", "pink"),
-            )
-
         indices_set = set()
         num_sample = 0
-        for batch_idx, data in enumerate(iter_data):
+        for batch_idx, data in enumerate(valid_data):
             num_sample += len(data)
             data = data.to(self.device)
             indices = self.model.get_indices(data)
@@ -156,7 +175,6 @@ class Trainer(object):
         ckpt_path = os.path.join(self.ckpt_dir,ckpt_file) if ckpt_file \
             else os.path.join(self.ckpt_dir, 'epoch_%d_collision_%.4f_model.pth' % (epoch, collision_rate))
         state = {
-            "args": self.args,
             "epoch": epoch,
             "best_loss": self.best_loss,
             "best_collision_rate": self.best_collision_rate,
@@ -165,88 +183,85 @@ class Trainer(object):
         }
         torch.save(state, ckpt_path, pickle_protocol=4)
 
-        self.logger.info(
-            set_color("Saving current", "blue") + f": {ckpt_path}"
-        )
-
         return ckpt_path
-
-    def _generate_train_loss_output(self, epoch_idx, s_time, e_time, loss, recon_loss):
-        train_loss_output = (
-            set_color("epoch %d training", "green")
-            + " ["
-            + set_color("time", "blue")
-            + ": %.2fs, "
-        ) % (epoch_idx, e_time - s_time)
-        train_loss_output += set_color("train loss", "blue") + ": %.4f" % loss
-        train_loss_output +=", "
-        train_loss_output += set_color("reconstruction loss", "blue") + ": %.4f" % recon_loss
-        return train_loss_output + "]"
-
 
     def fit(self, data):
 
         cur_eval_step = 0
 
-        for epoch_idx in range(self.epochs):
-            # train
-            training_start_time = time()
-            train_loss, train_recon_loss = self._train_epoch(data, epoch_idx)
-            training_end_time = time()
-            train_loss_output = self._generate_train_loss_output(
-                epoch_idx, training_start_time, training_end_time, train_loss, train_recon_loss
-            )
-            self.logger.info(train_loss_output)
+        with tqdm(total=self.epochs, desc=set_color("Training", "green")) as pbar:
+            for epoch_idx in range(self.epochs):
+                total_loss = 0
+                total_recon_loss = 0
+                total_rq_loss = 0
+                # train
+                training_start_time = time()
+                train_loss, train_recon_loss, train_rq_loss = self._train_epoch(data, epoch_idx)
+                training_end_time = time()
+                pbar.set_postfix({
+                    "train_loss": train_loss,
+                    "train_recon_loss": train_recon_loss,
+                    "train_rq_loss": train_rq_loss,
+                })
+                
+                
+                total_loss += train_loss
+                total_recon_loss += train_recon_loss
+                total_rq_loss += train_rq_loss
 
+                if self.wandb_logging:
+                    train_log = {
+                        "train_learning_rate": self.scheduler.get_last_lr()[0],
+                        "train_loss": train_loss,
+                        "train_recon_loss": train_recon_loss,
+                        "train_rq_loss": train_rq_loss,
+                    }
 
-            # eval
-            if (epoch_idx + 1) % self.eval_step == 0:
-                valid_start_time = time()
-                collision_rate = self._valid_epoch(data)
+                # eval
+                eval_log = {}
+                if (epoch_idx + 1) % self.eval_step == 0:
+                    collision_rate = self._valid_epoch(data)
+                    if self.wandb_logging:
+                        eval_log = {
+                            "eval_collision_rate": collision_rate,
+                        }
 
-                if train_loss < self.best_loss:
-                    self.best_loss = train_loss
-                    self._save_checkpoint(epoch=epoch_idx, ckpt_file=self.best_loss_ckpt)
+                    if train_loss < self.best_loss:
+                        self.best_loss = train_loss
+                        self._save_checkpoint(epoch=epoch_idx, ckpt_file=self.best_loss_ckpt)
 
-                if collision_rate < self.best_collision_rate:
-                    self.best_collision_rate = collision_rate
-                    cur_eval_step = 0
-                    self._save_checkpoint(epoch_idx, collision_rate=collision_rate,
-                                          ckpt_file=self.best_collision_ckpt)
-                else:
-                    cur_eval_step += 1
+                    if collision_rate < self.best_collision_rate:
+                        self.best_collision_rate = collision_rate
+                        cur_eval_step = 0
+                        self._save_checkpoint(epoch_idx, collision_rate=collision_rate,
+                                            ckpt_file=self.best_collision_ckpt)
+                    else:
+                        cur_eval_step += 1
 
-
-                valid_end_time = time()
-                valid_score_output = (
-                    set_color("epoch %d evaluating", "green")
-                    + " ["
-                    + set_color("time", "blue")
-                    + ": %.2fs, "
-                    + set_color("collision_rate", "blue")
-                    + ": %f]"
-                ) % (epoch_idx, valid_end_time - valid_start_time, collision_rate)
-
-                self.logger.info(valid_score_output)
-                ckpt_path = self._save_checkpoint(epoch_idx, collision_rate=collision_rate)
-                now_save = (-collision_rate, ckpt_path)
-                if len(self.newest_save_queue) < self.save_limit:
-                    self.newest_save_queue.append(now_save)
-                    heapq.heappush(self.best_save_heap, now_save)
-                else:
-                    old_save = self.newest_save_queue.pop(0)
-                    self.newest_save_queue.append(now_save)
-                    if collision_rate < -self.best_save_heap[0][0]:
-                        bad_save = heapq.heappop(self.best_save_heap)
+                    ckpt_path = self._save_checkpoint(epoch_idx, collision_rate=collision_rate)
+                    now_save = (-collision_rate, ckpt_path)
+                    if len(self.newest_save_queue) < self.save_limit:
+                        self.newest_save_queue.append(now_save)
                         heapq.heappush(self.best_save_heap, now_save)
+                    else:
+                        old_save = self.newest_save_queue.pop(0)
+                        self.newest_save_queue.append(now_save)
+                        if collision_rate < -self.best_save_heap[0][0]:
+                            bad_save = heapq.heappop(self.best_save_heap)
+                            heapq.heappush(self.best_save_heap, now_save)
 
-                        if bad_save not in self.newest_save_queue:
-                            delete_file(bad_save[1])
+                            if bad_save not in self.newest_save_queue:
+                                delete_file(bad_save[1])
 
-                    if old_save not in self.best_save_heap:
-                        delete_file(old_save[1])
-
-
+                        if old_save not in self.best_save_heap:
+                            delete_file(old_save[1])
+                
+                if self.wandb_logging:
+                    wandb.log({
+                        **train_log,
+                        **eval_log,
+                    })
+                pbar.update(1)
 
         return self.best_loss, self.best_collision_rate
 

@@ -1,0 +1,33 @@
+
+train.lr = 1e-3
+train.epochs = 20000
+train.batch_size = 1024
+train.num_workers = 4
+train.eval_step = 50
+train.learner = "AdamW"
+train.lr_scheduler_type = "linear"
+train.warmup_epochs = 50
+train.weight_decay = 1e-4
+train.dropout_prob = 0.0
+train.bn = False
+train.loss_type = "mse"
+
+train.kmeans_init = True
+train.kmeans_iters = 100
+train.sk_epsilons = [0.0, 0.0, 0.003]
+train.sk_iters = 50
+
+train.device = "cuda:0"
+train.wandb_logging = True
+
+train.num_emb_list = [256,256,256]
+train.e_dim = 32
+
+train.quant_loss_weight = 1.0
+train.beta = 0.25
+
+train.layers = [512,256,128]
+train.save_limit = 5
+
+train.ckpt_dir = "./ckpt/Beauty"
+train.data_path = "../data/Beauty/item_emb.parquet"

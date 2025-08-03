@@ -1,6 +1,9 @@
 
 import datetime
 import os
+import random
+import numpy as np
+import torch
 
 
 def ensure_dir(dir_path):
@@ -35,3 +38,13 @@ def get_local_time():
 def delete_file(filename):
     if os.path.exists(filename):
         os.remove(filename)
+
+def fix_everything():
+    """fix the random seed"""
+    seed = 2024
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
