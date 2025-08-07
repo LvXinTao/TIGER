@@ -5,7 +5,7 @@ import gin
 import numpy as np
 from time import time
 import logging
-import wandb
+
 from torch.utils.data import DataLoader
 
 from datasets import EmbDataset
@@ -20,7 +20,7 @@ def parse_config():
     gin.parse_config_file(args.config_path)
 
 
-@gin.configurable
+@gin.configurable('train')
 def train(
     lr,
     epochs,
@@ -39,7 +39,6 @@ def train(
     sk_epsilons,
     sk_iters,
     device,
-    wandb_logging,
     num_emb_list,
     e_dim,
     quant_loss_weight,
@@ -56,12 +55,7 @@ def train(
     print(gin.config_str())
     print("=================================================")
 
-    if wandb_logging:
-        
-        wandb.login()
-        wandb.init(project="rqvae")
-
-
+    
     """build dataset"""
     data = EmbDataset(data_path)
     model = RQVAE(in_dim=data.dim,
@@ -81,6 +75,7 @@ def train(
     data_loader = DataLoader(data,num_workers=num_workers,
                              batch_size=batch_size, shuffle=True,
                              pin_memory=True)
+                            
     trainer = Trainer(  lr,
                         epochs,
                         batch_size,
@@ -98,7 +93,6 @@ def train(
                         sk_epsilons,
                         sk_iters,
                         device,
-                        wandb_logging,
                         num_emb_list,
                         e_dim,
                         quant_loss_weight,

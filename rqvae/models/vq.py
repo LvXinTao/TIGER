@@ -92,6 +92,7 @@ class VectorQuantizer(nn.Module):
         loss = codebook_loss + self.beta * commitment_loss
 
         # preserve gradients
+        # Straight-through estimator
         x_q = x + (x_q - x).detach()
 
         indices = indices.view(x.shape[:-1])

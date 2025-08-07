@@ -6,12 +6,13 @@ from time import time
 from torch import optim
 from tqdm import tqdm
 from transformers import get_linear_schedule_with_warmup, get_constant_schedule_with_warmup
+from torch.utils.tensorboard import SummaryWriter
 
 from utils import ensure_dir,set_color,get_local_time,delete_file
 import os
 
 import heapq
-import wandb
+
 class Trainer(object):
 
     def __init__(self, 
@@ -32,7 +33,6 @@ class Trainer(object):
                     sk_epsilons,
                     sk_iters,
                     device,
-                    wandb_logging,
                     num_emb_list,
                     e_dim,
                     quant_loss_weight,
@@ -56,7 +56,6 @@ class Trainer(object):
         self.max_steps = epochs * data_num
 
         self.save_limit = save_limit
-        self.wandb_logging = wandb_logging
         self.best_save_heap = []
         self.newest_save_queue = []
         self.eval_step = min(eval_step, self.epochs)
@@ -66,6 +65,8 @@ class Trainer(object):
         saved_model_dir = "{}".format(get_local_time())
         self.ckpt_dir = os.path.join(self.ckpt_dir,saved_model_dir)
         ensure_dir(self.ckpt_dir)
+
+        self.writer = SummaryWriter(self.ckpt_dir)
 
         self.best_loss = np.inf
         self.best_collision_rate = np.inf
@@ -191,9 +192,6 @@ class Trainer(object):
 
         with tqdm(total=self.epochs, desc=set_color("Training", "green")) as pbar:
             for epoch_idx in range(self.epochs):
-                total_loss = 0
-                total_recon_loss = 0
-                total_rq_loss = 0
                 # train
                 training_start_time = time()
                 train_loss, train_recon_loss, train_rq_loss = self._train_epoch(data, epoch_idx)
@@ -203,28 +201,15 @@ class Trainer(object):
                     "train_recon_loss": train_recon_loss,
                     "train_rq_loss": train_rq_loss,
                 })
-                
-                
-                total_loss += train_loss
-                total_recon_loss += train_recon_loss
-                total_rq_loss += train_rq_loss
-
-                if self.wandb_logging:
-                    train_log = {
-                        "train_learning_rate": self.scheduler.get_last_lr()[0],
-                        "train_loss": train_loss,
-                        "train_recon_loss": train_recon_loss,
-                        "train_rq_loss": train_rq_loss,
-                    }
-
-                # eval
-                eval_log = {}
+                # log
+                self.writer.add_scalar("train/loss", train_loss, epoch_idx)
+                self.writer.add_scalar("train/recon_loss", train_recon_loss, epoch_idx)
+                self.writer.add_scalar("train/rq_loss", train_rq_loss, epoch_idx)
+                self.writer.add_scalar("train/learning_rate", self.scheduler.get_last_lr()[0], epoch_idx)
+                # eval       
                 if (epoch_idx + 1) % self.eval_step == 0:
                     collision_rate = self._valid_epoch(data)
-                    if self.wandb_logging:
-                        eval_log = {
-                            "eval_collision_rate": collision_rate,
-                        }
+                    self.writer.add_scalar("eval/collision_rate", collision_rate, epoch_idx)
 
                     if train_loss < self.best_loss:
                         self.best_loss = train_loss
@@ -255,12 +240,7 @@ class Trainer(object):
 
                         if old_save not in self.best_save_heap:
                             delete_file(old_save[1])
-                
-                if self.wandb_logging:
-                    wandb.log({
-                        **train_log,
-                        **eval_log,
-                    })
+                    
                 pbar.update(1)
 
         return self.best_loss, self.best_collision_rate

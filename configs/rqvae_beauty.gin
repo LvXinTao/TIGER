@@ -18,7 +18,6 @@ train.sk_epsilons = [0.0, 0.0, 0.003]
 train.sk_iters = 50
 
 train.device = "cuda:0"
-train.wandb_logging = True
 
 train.num_emb_list = [256,256,256]
 train.e_dim = 32
