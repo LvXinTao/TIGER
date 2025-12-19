@@ -8,7 +8,7 @@ This is an Unofficial Pytorch Implementation for the paper:
 
 # Data Preprocess
 
-Step 1: Decompress the downloaded 5-core reviews and metadata from [Amazon Review 2014](https://jmcauley.ucsd.edu/data/amazon/index_2014.html), which are in the format `reviews_Beauty_5.json.gz` and `meta_Beauty.json.gz`. Use the command provided in the `TIGER/data/process.ipynb` file to perform the decompression.
+Step 1: Decompress the downloaded 5-core reviews and metadata from [Amazon Review 2014](https://cseweb.ucsd.edu/~jmcauley/datasets/amazon/links.html), which are in the format `reviews_Beauty_5.json.gz` and `meta_Beauty.json.gz`. Use the command provided in the `TIGER/data/process.ipynb` file to perform the decompression.
 
 Step 2: Use `main.py` in `TIGER/rqvae` folder to train a rqvae model using semantic embeddings obtained in Step 1.
 
